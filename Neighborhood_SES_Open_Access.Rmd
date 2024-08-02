@@ -1,0 +1,293 @@
+---
+title: "Compute Neighborhood Socioeconomic Status"
+author: 'Dra. Daria Dementeva'
+date: '2023-02-14'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# For reproducibility
+set.seed(05081997)
+```
+
+```{r}
+# Install packages
+# Uncomment if necessary
+# install.packages("corrplot")
+# install.packages("dplyr")
+# install.packages("factoextra")
+# install.packages("missMethods")
+```
+
+```{r}
+# Activate libraries
+
+library(corrplot)
+library(dplyr)
+library(factoextra)
+library(missMethods)
+library(readr)
+```
+
+# Loading Data
+
+```{r}
+# getwd() # if required get working directory
+# setwd() # if required set working directory to read in files
+```
+
+```{r}
+arbeidsmarkt_sector_11_full <- read_csv("/Users/dariadementeva/arbeidsmarkt_sector_11_full.csv")
+familiekernen_sector_11_full_new <- read_csv("/Users/dariadementeva/familiekernen_sector_11_full_new.csv")
+demografische_gegevens_stat_sector_11_full <- read_csv("/Users/dariadementeva/demografische_gegevens_stat_sector_11_full.csv")
+onderwijs_stat_sector_11_full <- read_csv("/Users/dariadementeva/onderwijs_stat_sector_11_full.csv")
+woningen_stat_sector_11_full <- read_csv("/Users/dariadementeva/woningen_stat_sector_11_full.csv")
+TF_PSNL_INC_TAX_SECTOR_WIDE <- read_csv("/Users/dariadementeva/TF_PSNL_INC_TAX_SECTOR_WIDE.csv")
+```
+
+```{r}
+# Remove the first excessive column if necessary
+
+labour_market_ss <- arbeidsmarkt_sector_11_full[, -1]
+household_composition_ss <- familiekernen_sector_11_full_new[, -1]
+demographic_makeup_ss <- demografische_gegevens_stat_sector_11_full[, -1]
+education_ss <- onderwijs_stat_sector_11_full[, -1]
+housing_ss <- woningen_stat_sector_11_full[,-1]
+taxes_ss <- TF_PSNL_INC_TAX_SECTOR_WIDE[, -1]
+```
+
+# Data Pre-Processing: Computing Indicators
+
+## Compute proportion of residents over 25 years old with a BA per statistical sector
+
+```{r}
+education_ss_filtered <- education_ss[, c(1:2, 110, 113, 119)]
+```
+
+```{r}
+demographic_makeup_ss_filtered <- demographic_makeup_ss[, c(1:2, 192:239)]
+
+demographic_makeup_ss_filtered <- 
+  demographic_makeup_ss_filtered %>% 
+  select(c(1:2, starts_with("total_total"), 50))
+
+demographic_makeup_ss_filtered <- demographic_makeup_ss_filtered %>% 
+  rowwise() %>% 
+  mutate(over_25_years = sum(across(starts_with("total_total")), na.rm = T), 
+         .keep = "unused")
+```
+
+```{r}
+higher_edu_over25 <- merge(demographic_makeup_ss_filtered, education_ss_filtered, by = c("Stat_Sector_ID", "Stat_Sector"))
+```
+
+```{r}
+higher_edu_over25 <- higher_edu_over25 %>% 
+  rowwise() %>% 
+  mutate(higher_edu_diploma_holders = sum(total_total_higher_education_graduate_edu_11 + total_total_doctorate_edu_11, na.rm = T),.keep = "unused")
+```
+
+```{r}
+higher_edu_over25  <- higher_edu_over25  %>% 
+  rowwise() %>% 
+  mutate(prop_higher_edu_diploma_holders_over25 = higher_edu_diploma_holders / over_25_years)
+```
+
+```{r}
+higher_edu_over25$prop_higher_edu_diploma_holders_over25[is.nan(higher_edu_over25$prop_higher_edu_diploma_holders_over25)] <- 0
+higher_edu_over25$prop_higher_edu_diploma_holders_over25[higher_edu_over25$prop_higher_edu_diploma_holders_over25 > 1] <- 1
+
+higher_edu_over25 <-
+  higher_edu_over25 %>%
+  relocate(prop_higher_edu_diploma_holders_over25, .before = total_all_11) 
+
+```
+
+# Compute proportion of workers over 16 years old working in a managerial, technical, or professional (high-status) job per statistical sector
+
+```{r}
+# rename erroneously named variables 
+
+names(labour_market_ss)[474] <- "males_wholesale_and_retail_trade_repair_of_motor_vehicles_and_motorcycles_11"                     
+names(labour_market_ss)[475] <- "females_wholesale_and_retail_trade_repair_of_motor_vehicles_and_motorcycles_11"                   
+names(labour_market_ss)[476] <- "overall_wholesale_and_retail_trade_repair_of_motor_vehicles_and_motorcycles_11"   
+
+names(labour_market_ss)[504] <- "males_public_Administration_and_defence_compulsory_social_insurance_11"                           
+names(labour_market_ss)[505] <- "females_public_Administration_and_defence_compulsory_social_insurance_11"                         
+names(labour_market_ss)[506] <- "overall_public_Administration_and_defence_compulsory_social_insurance_11" 
+```
+
+
+```{r}
+labour_market_ss_filtered <- labour_market_ss[, c(1:2, 134,450:530,534:569, 572,602, 122)]
+
+labour_market_ss_filtered  <- 
+  labour_market_ss_filtered %>% 
+  select(c(1:3, starts_with("overall"), 87, 120:123))
+
+names(labour_market_ss_filtered)[9] <- "overall_water_distribution_waste_and_wastewater_management_and_remediation_11"
+names(labour_market_ss_filtered)[19] <-"overall_liberal_professions_and_scientific_and_technical_activities_11" 
+
+labour_market_ss_filtered <- labour_market_ss_filtered %>% 
+  rowwise() %>% 
+  mutate(ISCO_08_high_status = sum(overall_information_and_communication_11,
+                                   overall_financial_activities_and_insurance_11,
+                                   overall_professions_and_scientific_and_technical_activities_administrative_and_support_services_11,
+                                   overall_liberal_professions_and_scientific_and_technical_activities_11,
+                                   overall_administrative_and_support_services_11,
+                                   overall_public_administration_and_defence_education_human_health_and_social_services_11,
+                                   overall_education_11,
+                                   overall_Arts_Entertainment_and_Recreation_11,na.rm = T),
+         
+         ISCO_08_skill_level_2 = sum(overall_extraterritorial_organizations_and_bodies_11, 
+                                     overall_households_as_employers_11,
+                                     overall_human_health_and_social_services_11,
+                                     overall_public_Administration_and_defence_compulsory_social_insurance_11,
+                                     overall_exploitation_and_trade_in_real_estate_11,
+                                     overall_wholesale_and_retail_trade_transport_and_storage_provision_of_accommodation_and_meals_11,
+                                     overall_construction_industry_11,
+                                     overall_industry_11,
+                                     overall_Industry_and_extraction_of_minerals_11,
+                                     overall_agriculture_forestry_fisheries_11, na.rm = T),
+         
+         ISCO_skill_level_1  = sum(overall_extraction_of_minerals_11,
+                                   overall_production_and_distribution_of_electricity_gas_steam_and_chilled_air_11,
+                                   overall_water_distribution_waste_and_wastewater_management_and_remediation_11,
+                                   overall_wholesale_and_retail_trade_repair_of_motor_vehicles_and_motorcycles_11,
+                                   overall_transportation_and_storage_11,
+                                   overall_providing_accommodation_and_meals_11, na.rm = T),
+         
+         ISCO_not_elsewhere_classified =  sum(overall_not_indicated_prof_11, 
+                                              overall_other_services2_11, 
+                                              overall_other_services_11, na.rm = T),
+         .keep = "unused")
+```
+
+```{r}
+labour_market_ss_filtered <- labour_market_ss_filtered %>% 
+  rowwise() %>% 
+  mutate(workers_over_20_years_old = overall_total_labmarket_11 - overall_total_under_15yo_11 - working_overall_less_than_20_years_11 - jobseekers_overall_less_than_20_years_11)
+
+labour_market_ss_filtered <- labour_market_ss_filtered[, -c(6,8)]
+
+labour_market_ss_filtered <- labour_market_ss_filtered %>% 
+  rowwise() %>% 
+  mutate(prop_workers_over_20_years_old_high_status_jobs = ISCO_08_high_status/workers_over_20_years_old)
+
+labour_market_ss_filtered <-
+  labour_market_ss_filtered %>%
+  relocate(prop_workers_over_20_years_old_high_status_jobs, .before = overall_total_labmarket_11) 
+```
+
+# Extract average household income
+
+```{r, message=FALSE}
+
+taxes_ss_filtered <- taxes_ss %>%
+  select(c(1:3, ends_with("_2019")))
+
+median_total_net_taxable_income <- taxes_ss_filtered[, c(1:3,7)]
+```
+
+# Select and Merge all Variables 
+
+```{r}
+# Merge median_total_net_taxable_income, higher_edu_over25, labour_market_ss_filtered
+
+# Standardize column names 
+
+names(median_total_net_taxable_income)[c(1:3)] <- toupper(names(median_total_net_taxable_income)[c(1:3)])
+names(higher_edu_over25)[c(1:2)] <- c("CD_SECTOR", "TX_SECTOR_DESCR_NL") 
+names(labour_market_ss_filtered)[c(1:2)] <- c("CD_SECTOR", "TX_SECTOR_DESCR_NL")
+prop_of_residents_over_25_with_BA_aux <- higher_edu_over25[,1:3]
+labour_market_ss_filtered_aux <- labour_market_ss_filtered[,1:3]
+
+# The merge function does not work with many datasets: merge one-by-one
+
+neighbourhood_typology_aux1 <- merge(prop_of_residents_over_25_with_BA_aux,
+                                     labour_market_ss_filtered_aux,
+                                     by = c("CD_SECTOR", "TX_SECTOR_DESCR_NL"),
+                                     all.x = T)
+
+neighbourhood_typology_final <- merge(neighbourhood_typology_aux1,
+                                      median_total_net_taxable_income,
+                                      by = c("CD_SECTOR", "TX_SECTOR_DESCR_NL"), 
+                                      all.x = T)
+
+```
+
+```{r}
+# NA Management
+# Impute median by municipality for each NA
+# Obtain medians
+
+neighbourhood_typology_final_medians <- aggregate(neighbourhood_typology_final[, c(3,4,6)], list(neighbourhood_typology_final$CD_MUNTY_REFNIS), median, na.rm = T)
+
+names(neighbourhood_typology_final_medians)[1] <- "CD_MUNTY_REFNIS"
+names(neighbourhood_typology_final_medians)[2] <- "median_prop_higher_edu_diploma_holders_over25" 
+names(neighbourhood_typology_final_medians)[3] <- "median_prop_workers_over_20_years_old_high_status_jobs"
+names(neighbourhood_typology_final_medians)[4] <- "median_median_total_net_taxable_income"      
+
+```
+
+```{r}
+neighbourhood_typology_final_extra <- merge(neighbourhood_typology_final,
+                                            neighbourhood_typology_final_medians,
+                                            by = "CD_MUNTY_REFNIS")
+```
+
+```{r}
+neighbourhood_typology_final_extra <- neighbourhood_typology_final_extra  %>% 
+  mutate(prop_higher_edu_diploma_holders_over25_imp = coalesce(prop_higher_edu_diploma_holders_over25, median_prop_higher_edu_diploma_holders_over25),
+         prop_workers_over_20_years_old_high_status_jobs_imp = coalesce(prop_workers_over_20_years_old_high_status_jobs, median_prop_workers_over_20_years_old_high_status_jobs),
+         ms_median_total_net_taxable_income_imp = coalesce(ms_median_net_taxable_inc_2019, median_median_total_net_taxable_income))
+```
+
+
+```{r}
+# nrow(neighbourhood_typology_final_extra) # 19405 stat sectors
+
+corrplot::corrplot(cor(neighbourhood_typology_final_extra[,10:12],use = "complete.obs"), method = 'square', order = 'FPC', type = 'lower', diag = FALSE, tl.cex=0.5)
+```
+
+```{r}
+set.seed(5081997)
+neighbourhood_typology_pca_fit5 <- prcomp(~ prop_higher_edu_diploma_holders_over25_imp +   
+                                            prop_workers_over_20_years_old_high_status_jobs_imp +
+                                            ms_median_total_net_taxable_income_imp,                
+                                          data = neighbourhood_typology_final_extra, 
+                                          center = T, 
+                                          scale = T, rank = 1)
+summary(neighbourhood_typology_pca_fit5)
+
+res.var_pca_fit5 <- get_pca_var(neighbourhood_typology_pca_fit5)
+res.var_pca_fit5$coord          # Coordinates
+
+eig.val_pca_fit5 <- get_eigenvalue(neighbourhood_typology_pca_fit5)
+eig.val_pca_fit5
+
+# The first factor accounts for 64.69% of variance. Two factors account for 84.84% of variance
+# Pick a one-factor solution according to the eigenvalue (1.94)
+# First factor reflects neighborhood disadvantage (negative correlations with the latent variable) 
+# Statistical sectors scoring high on the latent variable - > disadvantaged ones
+# Statistical sectors scoring scoring low -> advantaged ones
+```
+
+# Extract 
+
+```{r}
+# Extract individual PCA scores per statistical sector
+SES_index <- as.data.frame(neighbourhood_typology_pca_fit5$x)
+names(SES_index)[1] <- "SES_index"
+```
+
+```{r}
+# Column-bind to the original data frame
+neighbourhood_typology_final_extra <- cbind(neighbourhood_typology_final_extra, SES_index)
+```
+
+
