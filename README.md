@@ -32,6 +32,6 @@ Train and test splits, as well as some of the algorithms used in this analysis, 
 
 # Notes on Code Re-Use
 
-You are free to modify or re-use the code for your research purposes. If you build up on or inspire from our codebase substantively, we would kindly ask you to cite our paper and acknowledge our contribution to you research application. 
+You are free to modify or re-use the code for your research purposes. If you build up on or inspire from our codebase substantively, we would kindly ask you to cite our paper and acknowledge our contribution to your research application. 
 
 
