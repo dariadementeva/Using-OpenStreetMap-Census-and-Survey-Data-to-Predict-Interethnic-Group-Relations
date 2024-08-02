@@ -1,0 +1,127 @@
+---
+title: "Compute Ethnic Entropy Index"
+author: 'Dra. Daria Dementeva'
+date: '2023-02-06'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# For reproducibility
+set.seed(05081997)
+```
+
+```{r}
+# Install packages
+# Uncomment if necessary
+# install.packages("BelgiumMaps.StatBel")
+# install.packages("dplyr")
+# install.packages("mapview")
+# install.packages("sp")
+```
+
+```{r}
+# Activate libraries
+
+library(BelgiumMaps.StatBel)
+library(dplyr)
+library(mapview)
+library(readr)
+library(sp)
+```
+
+# Loading Data
+
+```{r}
+# Read in census data
+# Specify the path to the "CENSUS_STAT_SECTOR_11_FULL.csv" file
+
+path <- "/Users/dariadementeva/CENSUS_STAT_SECTOR_11_FULL.csv"
+
+census <- read_csv(path)
+```
+
+# Pre-Process and Select
+
+```{r}
+census <- census[,-1]
+
+index_data <- census[, c(1:2, 713, 776, 840)]
+
+index_data <- as_tibble(index_data)
+```
+
+# Helper IDs for Aggregation 
+
+```{r}
+data(BE_ADMIN_SECTORS) 
+
+aggregate_ids <- BE_ADMIN_SECTORS@data[, c(25:27, 30)]
+```
+
+# Change Names for Merging
+
+```{r}
+names(index_data)[1] <- names(aggregate_ids)[1]
+
+names(index_data)[2] <- names(aggregate_ids)[3]
+```
+
+# Merge Data
+
+```{r}
+index_data_merged <- merge(index_data, aggregate_ids, by=c("CD_REFNIS_SECTOR","TX_SECTOR_DESCR_NL"))
+```
+
+```{r}
+index_data_merged <- as_tibble(index_data_merged)
+
+index_data_merged <- index_data_merged[,-6]
+```
+
+# Aggregate Data
+
+```{r}
+index_data_merged_aggregated <-
+  index_data_merged %>% 
+  group_by(TX_MUNTY_DESCR_NL) %>% 
+  summarise(belgian_all_11_munty = sum(belgian_all_11, na.rm = T),
+  nonbelgian_all_11_munty = sum(nonbelgian_all_11, na.rm = T),
+  total_population_11_munty = sum(total_population_11, na.rm = T)) %>%
+  ungroup()
+
+index_data_merged_upd <- merge(index_data_merged, index_data_merged_aggregated, by=c("TX_MUNTY_DESCR_NL"))
+```
+
+# Calculate Ethnic Entropy Index
+
+```{r}
+options(scipen = 999) # disable scientific numbers
+```
+
+```{r}
+ethnic_entropy_index_census <- index_data_merged_upd %>%
+  mutate(
+    p_nonbelgian = nonbelgian_all_11/total_population_11,
+    p_belgian = belgian_all_11/total_population_11)  %>%
+   group_by(CD_REFNIS_SECTOR,TX_SECTOR_DESCR_NL) %>%
+  summarise(ethnic_entropy_index = -sum(p_nonbelgian*log(p_nonbelgian) + p_belgian*log(p_belgian), na.rm=T))
+
+head(ethnic_entropy_index_census)
+```
+
+# Plot Ethnic Entropy Index
+
+```{r}
+mymap <- merge(BE_ADMIN_SECTORS, ethnic_entropy_index_census, by = "CD_REFNIS_SECTOR", all.x=TRUE, all.y=FALSE)
+```
+
+```{r}
+# This may take some time to run 
+
+# entropy_belgium <- spplot(mymap, "ethnic_entropy_index", main = "Entropy Index", col = "transparent")
+# entropy_belgium
+```
