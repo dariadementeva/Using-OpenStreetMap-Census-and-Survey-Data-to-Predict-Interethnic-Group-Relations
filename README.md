@@ -30,9 +30,8 @@ In total, there are 4 scripts.
 
 Train and test splits, as well as some of the algorithms used in this analysis, rely on randomness. We have pre-set the same seed everywhere to control the randomness. For data splitting and the ML training process, we used the set.seed() function just prior to initiating the training process to control the randomness and ensure reproducible results. Please note that differences in operating systems, R versions, or changes to the initial code could alter the results. Similarly, reproducibility depends on how package developers handle random number generation. However, we believe this should not be the case here.
 
-Notes on Code Re-Use
+# Notes on Code Re-Use
 
 You are free to modify or re-use the code for your research purposes. If you build up on or inspire from our codebase substantively, we would kindly ask you to cite our paper and acknowledge our contribution to you research application. 
-![image](https://github.com/user-attachments/assets/f9a9a29d-eb00-42bb-b636-ae37e61feaa6)
 
 
