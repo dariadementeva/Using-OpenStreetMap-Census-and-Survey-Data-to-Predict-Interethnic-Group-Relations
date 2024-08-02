@@ -1,0 +1,2148 @@
+---
+title: "Using OpenStreetMap, Census and Survey Data to Predict Interethnic Group Relations in Belgium: A Machine Learning Approach. Main Analysis"
+author: 'Dra. Daria Dementeva'
+date: '2023-02-12'
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE, message = FALSE, warnings = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# For reproducibility
+set.seed(05081997)
+```
+
+```{r}
+# Install packages
+# Uncomment if necessary
+# install.packages("caret")
+# install.packages("dplyr")
+# install.packages("glmtoolbox")
+# install.packages("missMethods")
+# install.packages("MLeval")
+# install.packages("mlr")
+# install.packages("readr")
+# install.packages("statmod")
+# install.packages("stats")
+# install.packages("tuneRanger")
+# install.packages("corrplot")
+
+```
+
+```{r, message=FALSE, warnings = FALSE}
+library(caret)
+library(dplyr)
+library(glmtoolbox)
+library(missMethods)
+library(MLeval)
+library(mlr)
+library(readr)
+library(statmod)
+library(stats)
+library(tuneRanger)
+library(corrplot)
+```
+
+```{r, message=FALSE, warnings = FALSE}
+# Perceived Threat 
+
+maj_perceived_threatML_upd_05_06_2023 <- read_csv("/Users/dariadementeva/maj_perceived_threatML_upd_05_06_2023.csv")
+
+# Intergroup Friendship
+
+maj_contact_complete_cases_forML_05_06_2023 <- read_csv("/Users/dariadementeva/maj_contact_complete_cases_forML_05_06_2023.csv")
+
+```
+
+```{r}
+perceived_threat_cont_merged_filtered_maj <- maj_perceived_threatML_upd_05_06_2023[, -1]
+contact_complete_cases_filtered_maj <- maj_contact_complete_cases_forML_05_06_2023[, -1]
+```
+
+```{r}
+colSums(is.na(perceived_threat_cont_merged_filtered_maj))
+which(is.na(perceived_threat_cont_merged_filtered_maj$population_density_inhabitants_km2))
+```
+
+```{r}
+colSums(is.na(contact_complete_cases_filtered_maj))
+which(is.na(contact_complete_cases_filtered_maj$population_density_inhabitants_km2))
+```
+
+# Perceived Threat
+
+Perceived Threat is treated as a continuous variable.
+
+```{r}
+summary(perceived_threat_cont_merged_filtered_maj[, 20:36])
+```
+
+## Pre-Process IVs: Scale Predictors
+
+```{r}
+set.seed(05081997)
+```
+
+```{r}
+perceived_threat_cont_merged_vars <- 
+  perceived_threat_cont_merged_filtered_maj[, 20:36] %>% 
+  scale()
+```
+
+```{r}
+perceived_threat_cont_merged_scaled <-  cbind(perceived_threat_cont_merged_filtered_maj[1:19],
+                                              perceived_threat_cont_merged_vars)
+```
+
+## One-Hot Encoding for Categorical Individual-Level Control Variables
+
+```{r}
+perceived_threat_cont_merged_scaled[, 16:19] <- impute_mode(perceived_threat_cont_merged_scaled[, 16:19], type = "columnwise", convert_tibble = F)
+
+
+perceived_threat_cont_merged_scaled <- 
+  perceived_threat_cont_merged_scaled %>%
+  mutate( 
+    
+    # gender
+    gender_man = ifelse(gender==1,1,0),
+    gender_woman = ifelse(gender==2,1,0),
+    
+    # subjective social class    
+    
+    subjective_sc_working_class = ifelse(subjective_social_class==1,1,0),
+    subjective_sc_low_middle_class = ifelse(subjective_social_class==2,1,0),
+    subjective_sc_higher_middle_class = ifelse(subjective_social_class==3,1,0),
+    subjective_sc_upper_class = ifelse(subjective_social_class==4,1,0),
+    subjective_sc_other_class = 
+      ifelse(subjective_social_class==7 | subjective_social_class==9, 1, 0),
+    
+    # age
+    
+    age_18_24  = ifelse(age6 == 1, 1, 0),
+    age_25_34  = ifelse(age6 == 2, 1, 0),
+    age_35_44  = ifelse(age6 == 3, 1, 0),
+    age_45_54  = ifelse(age6 == 4, 1, 0),
+    age_55_64  = ifelse(age6 == 5, 1, 0),
+    age_65_93  = ifelse(age6 == 6, 1, 0),
+    
+    # education
+    
+    edu_none_lower = ifelse(edu3 == 1, 1, 0),
+    edu_higher_secondary = ifelse(edu3 == 2, 1, 0),
+    edu_higher_university = ifelse(edu3 == 3, 1, 0))
+```
+
+## Check Correlations between IVs
+
+```{r}
+corrplot::corrplot(cor(perceived_threat_cont_merged_scaled[,c(20:52)]),
+                   tl.cex = 0.5, 
+                   addCoef.col = 1,   
+                   number.cex = 0.3)
+```
+
+```{r}
+hist(perceived_threat_cont_merged_scaled$q49_cumulative)
+```
+
+```{r}
+summary(perceived_threat_cont_merged_scaled$q49_cumulative)
+```
+
+## ML Solutions
+
+```{r}
+library(caret)
+set.seed(5081997)
+
+reduced_pt <- perceived_threat_cont_merged_scaled[, c(15, 20:52)]
+
+reduced_pt$gender_man <- as.factor(reduced_pt$gender_man)
+reduced_pt$gender_woman <- as.factor(reduced_pt$gender_woman)
+reduced_pt$age_18_24 <- as.factor(reduced_pt$age_18_24)
+reduced_pt$age_25_34 <- as.factor(reduced_pt$age_25_34)
+reduced_pt$age_35_44 <- as.factor(reduced_pt$age_35_44)
+reduced_pt$age_45_54 <- as.factor(reduced_pt$age_45_54)
+reduced_pt$age_55_64 <- as.factor(reduced_pt$age_55_64)
+reduced_pt$age_65_93 <- as.factor(reduced_pt$age_65_93)
+reduced_pt$subjective_sc_working_class <- as.factor(reduced_pt$subjective_sc_working_class)
+reduced_pt$subjective_sc_low_middle_class <- as.factor(reduced_pt$subjective_sc_low_middle_class)
+reduced_pt$subjective_sc_higher_middle_class <- as.factor(reduced_pt$subjective_sc_higher_middle_class)
+reduced_pt$subjective_sc_other_class <- as.factor(reduced_pt$subjective_sc_other_class)
+reduced_pt$subjective_sc_upper_class <- as.factor(reduced_pt$subjective_sc_upper_class)
+reduced_pt$edu_none_lower <- as.factor(reduced_pt$edu_none_lower)
+reduced_pt$edu_higher_secondary <- as.factor(reduced_pt$edu_higher_secondary)
+reduced_pt$edu_higher_secondary <- as.factor(reduced_pt$edu_higher_secondary)
+```
+
+```{r}
+colSums(is.na(reduced_pt))
+```
+
+```{r}
+# Create Train-Test Split
+
+set.seed(5081997)
+trainIndex <- createDataPartition(reduced_pt$q49_cumulative, p = 0.8, 
+                                  list = FALSE, 
+                                  times = 1)
+# head(trainIndex)
+
+ptTrain <- reduced_pt[ trainIndex,]
+ptTest  <- reduced_pt[-trainIndex,]
+```
+
+```{r}
+set.seed(5081997)
+fitControl <- trainControl(method = "cv",
+                           number = 10)
+```
+
+## Fit Logistic Regression
+
+### Spaces of Encounter
+
+```{r}
+set.seed(5081997)
+lm_fit_ml_b1 <- caret::train(q49_cumulative ~
+                               #  SES_index +
+                               #  ethnic_entropy_index +
+                               #  population_density_inhabitants_km2 +
+                               Third_Place_Spaces+
+                               Muslim_Spaces_of_Worship +
+                               Civic_Spaces  +
+                               Educational_Institutonal_Spaces +
+                               Functional_Spaces  +
+                               Medical_Institutonal_Spaces  +
+                               Money_Related_Institutonal_Spaces   +
+                               Christian_Spaces_of_Worship  +
+                               Public_Open_Spaces  +
+                               Retail_Spaces  +
+                               Social_Service_Instituional_Spaces  +
+                               User_Selecting_Spaces +
+                               Natural_Semi_Natural_Spaces  +
+                               Interchange_Spaces,
+                             #  gender_woman +
+                             #  subjective_sc_working_class +
+                             #  subjective_sc_low_middle_class +
+                             #  subjective_sc_upper_class +
+                             #  subjective_sc_other_class +
+                             #  age_18_24 +
+                             #  age_25_34 +
+                             #  age_35_44 +
+                             #  age_45_54 +
+                             #  age_55_64 +
+                             #  edu_none_lower +
+                             #  edu_higher_secondary,
+                             data = ptTrain,
+                             method = "lm",
+                             trControl = fitControl,
+                             metric = "RMSE")
+lm_fit_ml_b1
+
+set.seed(5081997)
+predictions <- predict(lm_fit_ml_b1, ptTest[,-c(1, 16:34)])
+threat_lm_test_fit_b1  <- postResample(pred = predictions, obs = ptTest$q49_cumulative)
+threat_lm_test_fit_b1
+
+#RMSE  0.778058746
+#MSE  0.6053754
+#Rsquared  0.008431065
+#MAE    0.631031230
+```
+
+### Spaces of Encounter & Administrative Characteristics
+
+```{r}
+set.seed(5081997)
+lm_fit_ml_b2 <- caret::train(q49_cumulative ~
+                               SES_index +
+                               ethnic_entropy_index +
+                               population_density_inhabitants_km2 +
+                               Third_Place_Spaces +
+                               Muslim_Spaces_of_Worship +
+                               Civic_Spaces  +
+                               Educational_Institutonal_Spaces +
+                               Functional_Spaces  +
+                               Medical_Institutonal_Spaces  +
+                               Money_Related_Institutonal_Spaces   +
+                               Christian_Spaces_of_Worship  +
+                               Public_Open_Spaces  +
+                               Retail_Spaces  +
+                               Social_Service_Instituional_Spaces  +
+                               User_Selecting_Spaces +
+                               Natural_Semi_Natural_Spaces  +
+                               Interchange_Spaces,
+                             #  gender_woman +
+                             #  subjective_sc_working_class +
+                             #  subjective_sc_low_middle_class +
+                             #  subjective_sc_upper_class +
+                             #  subjective_sc_other_class +
+                             #  age_18_24 +
+                             #  age_25_34 +
+                             #  age_35_44 +
+                             #  age_45_54 +
+                             #  age_55_64 +
+                             #  edu_none_lower +
+                             #  edu_higher_secondary,
+                             data = ptTrain, 
+                             method = "lm", 
+                             trControl = fitControl,
+                             metric = "RMSE")
+lm_fit_ml_b2
+
+set.seed(5081997)
+predictions <- predict(lm_fit_ml_b2, ptTest[,-c(1, 19:34)])
+threat_lm_test_fit_b2  <- postResample(pred = predictions, obs = ptTest$q49_cumulative)
+threat_lm_test_fit_b2
+
+#RMSE  0.76907035
+#MSE 0.5914692
+#Rsquared  0.03021894
+#MAE  0.61646440   
+```
+
+### Spaces of Encounter, Administrative Characteristics & Individual Features
+
+```{r}
+set.seed(5081997)
+lm_fit_ml_all <- caret::train(q49_cumulative ~
+                                SES_index +
+                                ethnic_entropy_index +
+                                population_density_inhabitants_km2 +
+                                Third_Place_Spaces  +
+                                Muslim_Spaces_of_Worship +
+                                Civic_Spaces  +
+                                Educational_Institutonal_Spaces +
+                                Functional_Spaces  +
+                                Medical_Institutonal_Spaces  +
+                                Money_Related_Institutonal_Spaces   +
+                                Christian_Spaces_of_Worship  +
+                                Public_Open_Spaces  +
+                                Retail_Spaces  +
+                                Social_Service_Instituional_Spaces  +
+                                User_Selecting_Spaces +
+                                Natural_Semi_Natural_Spaces  +
+                                Interchange_Spaces +
+                                gender_woman +
+                                subjective_sc_working_class +
+                                subjective_sc_low_middle_class +
+                                subjective_sc_upper_class +
+                                subjective_sc_other_class +
+                                age_18_24 +
+                                age_25_34 +
+                                age_35_44 +
+                                age_45_54 +
+                                age_55_64 +
+                                edu_none_lower +
+                                edu_higher_secondary,
+                              data = ptTrain, 
+                              method = "lm", 
+                              trControl = fitControl,
+                              metric = "RMSE")
+
+summary(lm_fit_ml_all$finalModel)
+```
+
+```{r}
+as.data.frame(round(lm_fit_ml_all$finalModel$coefficients, 4))
+```
+
+```{r}
+set.seed(5081997)
+predictions <- predict(lm_fit_ml_all, ptTest[,-c(1, 19, 23, 31, 34)])
+threat_lm_test_fit_all  <- postResample(pred = predictions, obs = ptTest$q49_cumulative)
+threat_lm_test_fit_all
+
+# RMSE      Rsquared       MAE         MSE
+# 0.7084021  0.1747110     0.5407343   0.5018335
+```
+
+```{r}
+varImp(lm_fit_ml_all)
+```
+
+```{r}
+# store variable importance
+lm_fit_pt_to_plot <- as.data.frame(varImp(lm_fit_ml_all)$importance)
+
+names(lm_fit_pt_to_plot)[1] <- "LM"
+
+lm_fit_pt_to_plot_vip <- tibble::rownames_to_column(lm_fit_pt_to_plot, "Variable")
+
+my_cols_var_imp  <- c("gray84",
+                      "gray83",
+                      "gray82",
+                      "gray81",
+                      "gray80",
+                      "gray79",
+                      "gray78",
+                      "gray77",
+                      "gray76",
+                      "gray75",
+                      "gray74",
+                      "gray73",
+                      "gray72",
+                      "gray71",
+                      "gray70",
+                      "gray69",
+                      "gray68",
+                      "gray67",
+                      "gray66",
+                      "gray65",
+                      "gray64",
+                      "gray63",
+                      "gray62",
+                      "gray61",
+                      "gray60",
+                      "gray59",
+                      "gray58",
+                      "gray57",
+                      "gray56",
+                      "gray55",
+                      "gray54",
+                      "gray53",
+                      "gray52",
+                      "gray51",
+                      "gray50",
+                      "gray49",
+"gray48")
+
+q49_var_imp_plot_lm <- ggplot(lm_fit_pt_to_plot_vip, aes(x = reorder(Variable, LM), y=LM)) + 
+  geom_bar(aes(fill = reorder(Variable, LM)), stat = "identity", width=0.5) +
+  scale_fill_manual(values = my_cols_var_imp) + 
+  ylab("Feature Importance") + 
+  xlab("Variables") +
+  theme_classic(base_size = 12) + 
+  theme(axis.title.x=element_text(colour="gray8", size = 11), 
+        axis.title.y=element_text(colour="gray8", size = 11),
+        axis.text.y = element_text(color = "gray8", size = 6.5),
+        axis.text.x = element_text(color = "gray8", size = 6.5),
+        title = element_text(colour = "gray8", size = 11),
+        panel.background = element_rect(fill = 'gray97'),
+        legend.position= "none") +
+  labs(title="Variable Importance Scores: LM",
+       subtitle = "Perceived Ethnic Threat") +
+  #      caption = "num.tree = 2500; mtry = 10, min.node size = 10, splitrule = maxstat") + 
+  coord_flip()
+
+q49_var_imp_plot_lm
+q49_var_imp_plot_lm 
+```
+
+## RF Default
+
+### Spaces of Encounter
+
+```{r}
+ set.seed(5081997)
+ fitControl <- trainControl(method = "cv",
+                            number = 10)
+```
+
+```{r}
+ set.seed(5081997)
+ rf_fit_b1 <- caret::train(q49_cumulative ~ 
+                            Third_Place_Spaces  +
+                             Muslim_Spaces_of_Worship +
+                             Civic_Spaces  +
+                             Educational_Institutonal_Spaces +
+                             Functional_Spaces  +
+                             Medical_Institutonal_Spaces  +
+                             Money_Related_Institutonal_Spaces   +
+                             Christian_Spaces_of_Worship  +
+                             Public_Open_Spaces  +
+                             Retail_Spaces  +
+                             Social_Service_Instituional_Spaces  +
+                             User_Selecting_Spaces +
+                             Natural_Semi_Natural_Spaces  +
+                             Interchange_Spaces,      
+                           data = ptTrain, 
+                           method = "ranger", 
+                           trControl = fitControl,
+                           importance = "permutation",
+                           metric = "RMSE")
+rf_fit_b1
+ 
+ set.seed(5081997)
+ predictions <- predict(rf_fit_b1, ptTest[,-c(1, 16:34)])
+ threat_rf_test_fit_b1  <- postResample(pred = predictions, obs = ptTest$q49_cumulative)
+ threat_rf_test_fit_b1
+
+#RMSE 0.77952441
+#MSE 0.6076583
+#Rsquared  0.01244573
+#MAE  0.62583662 
+```
+
+### Spaces of Encounter & Administrative Characteristics
+
+```{r}
+ set.seed(5081997)
+ fitControl <- trainControl(method = "cv",
+                            number = 10)
+```
+
+```{r}
+ set.seed(5081997)
+ rf_fit_b2 <- caret::train(q49_cumulative ~ 
+                             SES_index +
+                             ethnic_entropy_index +
+                             population_density_inhabitants_km2 +
+                             Third_Place_Spaces  +
+                             Muslim_Spaces_of_Worship +
+                             Civic_Spaces  +
+                             Educational_Institutonal_Spaces +
+                             Functional_Spaces  +
+                             Medical_Institutonal_Spaces  +
+                             Money_Related_Institutonal_Spaces   +
+                             Christian_Spaces_of_Worship  +
+                             Public_Open_Spaces  +
+                             Retail_Spaces  +
+                             Social_Service_Instituional_Spaces  +
+                             User_Selecting_Spaces +
+                             Natural_Semi_Natural_Spaces  +
+                             Interchange_Spaces, 
+                           data = ptTrain, 
+                           method = "ranger", 
+                           trControl = fitControl,
+                           importance = "permutation",
+                           metric = "RMSE")
+ rf_fit_b2
+ 
+ set.seed(5081997)
+ predictions <- predict(rf_fit_b2, ptTest[,-c(1, 19:34)])
+ threat_rf_test_fit_b2  <- postResample(pred = predictions, obs = ptTest$q49_cumulative)
+ threat_rf_test_fit_b2
+
+#RMSE 0.77257163
+#MSE 0.5968669
+#Rsquared  0.02723972
+#MAE  0.62131714  
+```
+
+```{r}
+set.seed(5081997)
+fitControl <- trainControl(method = "cv",
+                           number = 10)
+```
+
+### Spaces of Encounter, Administrative Characteristics & Individual Features
+
+```{r}
+set.seed(5081997)
+rf_fit_all <- caret::train(q49_cumulative ~ ., data = ptTrain, 
+                 method = "ranger", 
+                 trControl = fitControl,
+                 importance = "permutation",
+                 metric = "RMSE")
+rf_fit_all
+```
+
+```{r}
+set.seed(5081997)
+predictions <- predict(rf_fit_all, ptTest[,-1])
+threat_rf_test_fit_all  <- postResample(pred = predictions, obs = ptTest$q49_cumulative)
+threat_rf_test_fit_all
+
+#RMSE 0.7001784
+#MSE: 0.4902498
+#Rsquared  0.2058144
+#MAE 0.5355077 
+```
+
+```{r}
+varImp_rf_all_threat  <-varImp(rf_fit_all)
+varImp_rf_all_threat
+
+varImp_lm_all_threat  <-varImp(lm_fit_ml_all)
+varImp_lm_all_threat
+```
+
+## Tuned RF
+
+### Spaces of Encounter
+
+```{r}
+
+pt.task = makeRegrTask(data = ptTrain, target = "q49_cumulative")
+
+# Estimate runtime
+
+estimateTimeTuneRanger(pt.task, iters = 1000, num.threads = 1,
+                       num.trees = 2500)
+
+res_mtry <- tuneMtryFast(q49_cumulative ~ 
+                           Third_Place_Spaces+
+                           Muslim_Spaces_of_Worship +
+                           Civic_Spaces  +
+                           Educational_Institutonal_Spaces +
+                           Functional_Spaces  +
+                           Medical_Institutonal_Spaces  +
+                           Money_Related_Institutonal_Spaces   +
+                           Christian_Spaces_of_Worship  +
+                           Public_Open_Spaces  +
+                           Retail_Spaces  +
+                           Social_Service_Instituional_Spaces  +
+                           User_Selecting_Spaces +
+                           Natural_Semi_Natural_Spaces  +
+                           Interchange_Spaces, data = ptTrain, stepFactor = 0.5)
+res_mtry # from 2 to 10
+```
+
+```{r}
+set.seed(5081997)
+
+fitControl <- trainControl(method = "cv",
+                             number = 10) 
+  
+  
+rfGrid_4 <- expand.grid(mtry = c(2, 5, 10),
+                         splitrule = c("variance", "extratrees", "maxstat"),
+                         min.node.size = c(5,10))
+  
+store_maxtrees <- list()
+
+for (i in seq(500, 2500, by = 500)) {
+  
+  set.seed(5081997)
+  
+  rf_fit_tuned_spaces <- caret::train(q49_cumulative ~ 
+                                Third_Place_Spaces+
+                                Muslim_Spaces_of_Worship +
+                                Civic_Spaces  +
+                                Educational_Institutonal_Spaces +
+                                Functional_Spaces  +
+                                Medical_Institutonal_Spaces  +
+                                Money_Related_Institutonal_Spaces   +
+                                Christian_Spaces_of_Worship  +
+                                Public_Open_Spaces  +
+                                Retail_Spaces  +
+                                Social_Service_Instituional_Spaces  +
+                                User_Selecting_Spaces +
+                                Natural_Semi_Natural_Spaces  +
+                                Interchange_Spaces,
+                                data = ptTrain, 
+                                 method = "ranger", 
+                                 trControl = fitControl,
+                                 tuneGrid =  rfGrid_4,
+                                 verbose = T,
+                                 importance = "permutation",
+                                 metric = "RMSE",
+                                 num.tree = i)
+  
+  key <- toString(i)
+  store_maxtrees[[key]] <-   rf_fit_tuned_spaces 
+  
+}
+
+
+results_tree <- resamples(store_maxtrees)
+summary(results_tree)
+
+# RMSE: 2000, 2500
+```
+
+```{r}
+best_model_rf_spaces_1 <- store_maxtrees[["2000"]] 
+best_model_rf_spaces_2 <- store_maxtrees[["2500"]] 
+```
+
+```{r}
+set.seed(5081997)
+
+predictions_spaces <- predict(best_model_rf_spaces_1, ptTest[,-c(1, 16:34)])
+threat_rf_test_fit_tuned_spaces  <- postResample(pred = predictions_spaces, obs = ptTest$q49_cumulative)
+threat_rf_test_fit_tuned_spaces
+
+#RMSE 0.77375756
+#MSE 0.5987008
+#Rsquared 0.02025703
+#MAE 0.62538617 
+```
+
+```{r}
+set.seed(5081997)
+
+predictions_spaces_2 <- predict(best_model_rf_spaces_2, ptTest[,-c(1, 16:34)])
+threat_rf_test_fit_tuned_spaces_2  <- postResample(pred = predictions_spaces_2, obs = ptTest$q49_cumulative)
+threat_rf_test_fit_tuned_spaces_2
+
+#RMSE 0.77379870
+#MSE 0.5987644
+#Rsquared 0.02027025
+#MAE 0.62544553  
+```
+
+### Spaces of Encounter & Administrative Characteristics
+
+```{r}
+pt.task = makeRegrTask(data = ptTrain, target = "q49_cumulative")
+
+# Estimate runtime
+
+estimateTimeTuneRanger(pt.task, iters = 1000, num.threads = 1,
+                       num.trees = 2500)
+
+res_mtry <- tuneMtryFast(q49_cumulative ~ 
+                           SES_index +
+                           ethnic_entropy_index +
+                           population_density_inhabitants_km2 +
+                           Third_Place_Spaces+
+                           Muslim_Spaces_of_Worship +
+                           Civic_Spaces  +
+                           Educational_Institutonal_Spaces +
+                           Functional_Spaces  +
+                           Medical_Institutonal_Spaces  +
+                           Money_Related_Institutonal_Spaces   +
+                           Christian_Spaces_of_Worship  +
+                           Public_Open_Spaces  +
+                           Retail_Spaces  +
+                           Social_Service_Instituional_Spaces  +
+                           User_Selecting_Spaces +
+                           Natural_Semi_Natural_Spaces  +
+                           Interchange_Spaces, data = ptTrain, stepFactor = 0.5)
+res_mtry # from 2 to 10
+```
+
+```{r}
+set.seed(5081997)
+
+fitControl <- trainControl(method = "cv",
+                           number = 10) 
+
+
+rfGrid_4 <- expand.grid(mtry = c(2, 5, 10),
+                        splitrule = c("variance", "extratrees", "maxstat"),
+                        min.node.size = c(5,10))
+
+store_maxtrees <- list()
+
+for (i in seq(500, 2500, by = 500)) {
+  
+  set.seed(5081997)
+  
+  rf_fit_tuned_spaces_admin <- caret::train(q49_cumulative ~ 
+                                        SES_index +
+                                        ethnic_entropy_index +
+                                        population_density_inhabitants_km2 +
+                                        Third_Place_Spaces+
+                                        Third_Place_Spaces+
+                                        Muslim_Spaces_of_Worship +
+                                        Civic_Spaces  +
+                                        Educational_Institutonal_Spaces +
+                                        Functional_Spaces  +
+                                        Medical_Institutonal_Spaces  +
+                                        Money_Related_Institutonal_Spaces   +
+                                        Christian_Spaces_of_Worship  +
+                                        Public_Open_Spaces  +
+                                        Retail_Spaces  +
+                                        Social_Service_Instituional_Spaces  +
+                                        User_Selecting_Spaces +
+                                        Natural_Semi_Natural_Spaces  +
+                                        Interchange_Spaces,
+                                      data = ptTrain, 
+                                      method = "ranger", 
+                                      trControl = fitControl,
+                                      tuneGrid =  rfGrid_4,
+                                      verbose = T,
+                                      importance = "permutation",
+                                      metric = "RMSE",
+                                      num.tree = i)
+  
+  key <- toString(i)
+  store_maxtrees[[key]] <-    rf_fit_tuned_spaces_admin
+  
+}
+
+
+results_tree <- resamples(store_maxtrees)
+summary(results_tree)
+
+# RMSE: 500, 1000
+```
+
+```{r}
+ best_model_rf_spaces_admin_1 <- store_maxtrees[["500"]] 
+ best_model_rf_spaces_admin_2 <- store_maxtrees[["1000"]] 
+```
+
+```{r}
+set.seed(5081997)
+
+predictions_spaces_admin <- predict(best_model_rf_spaces_admin_1, ptTest[,-c(1, 19:34)])
+threat_rf_test_fit_tuned_spaces_admin  <- postResample(pred = predictions_spaces_admin, obs = ptTest$q49_cumulative)
+threat_rf_test_fit_tuned_spaces_admin
+
+#RMSE 0.75911508
+#MSE 0.5762557
+#Rsquared 0.05395162
+#MAE 0.60685622  
+```
+
+```{r}
+set.seed(5081997)
+
+predictions_spaces_admin_2 <- predict(best_model_rf_spaces_admin_2, ptTest[,-c(1, 19:34)])
+threat_rf_test_fit_tuned_spaces__admin_2  <- postResample(pred = predictions_spaces_admin_2, obs = ptTest$q49_cumulative)
+threat_rf_test_fit_tuned_spaces__admin_2
+
+#RMSE 0.76059260
+#MSE 0.5785011
+#Rsquared  0.04922623
+#MAE 0.60810342  
+```
+
+```{r}
+# Store Variable Importance Scores
+
+rf_fit_pt_to_plot <- as.data.frame(varImp(rf_fit_all)$importance)
+
+names(rf_fit_pt_to_plot)[1] <- "RF"
+
+rf_fit_pt_to_plot_vip <- tibble::rownames_to_column(rf_fit_pt_to_plot, "Variable")
+
+q43d_varImp_best_model_vis_sgb <- ggplot(rf_fit_pt_to_plot_vip, aes(x = reorder(Variable, RF), y=RF)) + 
+  geom_bar(aes(fill = reorder(Variable, RF)), stat = "identity", width=0.5) +
+  scale_fill_manual(values = my_cols_var_imp) + 
+  ylab("Feature Importance") + 
+  xlab("Variables") +
+  theme_classic(base_size = 12) + 
+  theme(axis.title.x=element_text(colour="gray8", size = 11), 
+        axis.title.y=element_text(colour="gray8", size = 11),
+        axis.text.y = element_text(color = "gray8", size = 6.5),
+        axis.text.x = element_text(color = "gray8", size = 6.5),
+        title = element_text(colour = "gray8", size = 11),
+        panel.background = element_rect(fill = 'gray97'),
+        legend.position= "none") +
+  labs(title="Random Forest Model: Importance Scores",
+       subtitle = "Perceived Threat",
+       caption = "Continuous Dependent Variable") + 
+  coord_flip()
+
+q43d_varImp_best_model_vis_sgb
+```
+
+### Spaces of Encounter, Administrative Characteristics & Individual Features
+
+```{r}
+pt.task = makeRegrTask(data = ptTrain, target = "q49_cumulative")
+
+# Estimate runtime
+
+estimateTimeTuneRanger(pt.task, iters = 1000, num.threads = 1,
+num.trees = 2500)
+
+res_mtry <- tuneMtryFast(q49_cumulative ~ ., data = ptTrain, stepFactor = 0.5)
+res_mtry # from 2 to 10
+```
+
+```{r}
+set.seed(5081997)
+
+fitControl <- trainControl(method = "cv",
+                             number = 10) 
+  
+  
+rfGrid_4 <- expand.grid(mtry = c(2, 5, 10),
+                         splitrule = c("variance", "extratrees", "maxstat"),
+                         min.node.size = c(5,10))
+  
+store_maxtrees_pt_all <- list()
+
+for (i in seq(500, 2500, by = 500)) {
+  
+  set.seed(5081997)
+  
+  rf_fit_tuned_4 <- caret::train(q49_cumulative ~ ., data = ptTrain, 
+                                 method = "ranger", 
+                                 trControl = fitControl,
+                                 tuneGrid =  rfGrid_4,
+                                 verbose = T,
+                                 importance = "permutation",
+                                 metric = "RMSE",
+                                 num.tree = i)
+  
+  key <- toString(i)
+  store_maxtrees_pt_all[[key]] <- rf_fit_tuned_4
+  
+}
+
+
+results_tree_pt_all <- resamples(store_maxtrees_pt_all)
+summary(results_tree_pt_all)
+
+# RMSE: 500, 2000, 2500
+```
+
+```{r}
+best_model_fine_tuned_1 <- store_maxtrees_pt_all[["500"]] 
+best_model_fine_tuned_2 <- store_maxtrees_pt_all[["2000"]] 
+best_model_fine_tuned_3 <- store_maxtrees_pt_all[["2500"]]  # The best model in terms of parameteres
+```
+
+```{r}
+set.seed(5081997)
+predictions <- predict(best_model_fine_tuned_1, ptTest[,-1])
+threat_rf_test_fit_tuned_1  <- postResample(pred = predictions, obs = ptTest$q49_cumulative)
+threat_rf_test_fit_tuned_1
+
+# Target:
+# RMSE  Rsquared       MAE 
+#   0.7001784 0.2058144 0.5355077 
+
+#      RMSE  Rsquared       MAE 
+# 0.7032571 0.1869335 0.5376427 
+```
+
+```{r}
+set.seed(5081997)
+predictions <- predict(best_model_fine_tuned_2, ptTest[,-1])
+threat_rf_test_fit_tuned_2 <- postResample(pred = predictions, obs = ptTest$q49_cumulative)
+threat_rf_test_fit_tuned_2
+
+# Target:
+# RMSE  Rsquared       MAE 
+#   0.7001784 0.2058144 0.5355077 
+
+#    RMSE  Rsquared       MAE 
+# 0.7016915 0.1917467 0.5366577 
+```
+
+```{r}
+set.seed(5081997)
+predictions <- predict(best_model_fine_tuned_3, ptTest[,-1])
+threat_rf_test_fit_tuned_3 <- postResample(pred = predictions, obs = ptTest$q49_cumulative)
+threat_rf_test_fit_tuned_3
+# Target:
+# RMSE  Rsquared       MAE 
+#   0.7001784 0.2058144 0.5355077 
+
+#      RMSE  Rsquared       MAE  MSE
+#  0.7016263 0.1918797 0.5369414 0.4922795
+```
+
+```{r}
+# Store Variable Importance Scores
+
+rf_fit_pt_to_plot <- as.data.frame(varImp(best_model_fine_tuned_3)$importance)
+
+rownames(rf_fit_pt_to_plot) <- c("Educational Institutional Spaces",
+                                 "Functional Spaces",
+                                 "Medical Institutional Spaces",
+                                 "Money-Related Institutional Spaces",
+                                 "Christian Spaces of Worship",
+                                 "Muslim Spaces of Worship",
+                                 "Public Open Spaces",
+                                 "Retail Spaces",
+                                 "Social Service Institutional Spaces",
+                                 "Third Spaces", 
+                                 "User-Selecting Spaces",
+                                 "Civic Spaces",
+                                 "Natural & Semi-Natural Spaces",
+                                 "Interchange Spaces",
+                                 "Ethnic Entropy Index",
+                                 "Neighborhood SES",
+                                 "Population Density",
+                                 "Gender: Male",
+                                 "Gender: Female",
+                                 "Subjective Social Class: Working Class",
+                                 "Subjective Social Class: Low Middle Class",
+                                 "Subjective Social Class: Higher Middle Class",
+                                 "Subjective Social Class: Upper Class",
+                                 "Subjective Social Class: Other Class",
+                                 "Age: 18-24", 
+                                 "Age: 25-34",
+                                 "Age: 35-44",
+                                 "Age: 45-54",
+                                 "Age: 55-64",
+                                 "Age: 65-93",
+                                 "Education: None or Lower", 
+                                 "Education: Higher Secondary",
+                                 "Education: Higher and University Education") 
+
+names(rf_fit_pt_to_plot)[1] <- "RF"
+
+rf_fit_pt_to_plot_vip <- tibble::rownames_to_column(rf_fit_pt_to_plot, "Variable")
+
+q49_var_imp_plot <- ggplot(rf_fit_pt_to_plot_vip, aes(x = reorder(Variable, RF), y=RF)) + 
+  geom_bar(aes(fill = reorder(Variable, RF)), stat = "identity", width=0.5) +
+  scale_fill_manual(values = my_cols_var_imp) + 
+  ylab("Feature Importance") + 
+  xlab("Variables") +
+  theme_classic(base_size = 12) + 
+ theme(axis.title.x=element_text(colour="gray8", size = 11), 
+        axis.title.y=element_text(colour="gray8", size = 11),
+        axis.text.y = element_text(color = "gray8", size = 6.5),
+        axis.text.x = element_text(color = "gray8", size = 6.5),
+        title = element_text(colour = "gray8", size = 11),
+        panel.background = element_rect(fill = 'gray97'),
+        legend.position= "none") +
+  labs(title="Variable Importance Scores: RF",
+       subtitle = "Perceived Ethnic Threat",
+       caption = "num.tree = 2500; mtry = 10, min.node size = 10, splitrule = maxstat") + 
+  coord_flip()
+
+# Save for the paper 
+# ggsave("pt_varImp.jpeg", units="in", width=8, height=5, dpi=800)
+
+```
+
+# Intergroup Friendship
+
+Intergroup friendship/contact is treated as a continuous variable.
+
+-   "D27 -- How many of your friends and acquaintainces have a non-Western migration background?"
+-   [1] None (no contact)
+-   [2] One or few (little contact)
+-   [3] The minority (moderate to intense contact)
+-   [4] About half (moderate to intense contact)
+-   [5] The majority (moderate to intense contact)
+-   [6] Almost all (moderate to intense contact)
+-   [7] All (moderate to intense contact)
+
+```{r}
+table(contact_complete_cases_filtered_maj$contact) # right-skewed 
+```
+
+## Pre-Process IVs: Scale Predictors
+
+```{r}
+contact_complete_cases_scaled <- 
+  contact_complete_cases_filtered_maj[, 20:36] %>% 
+  scale()
+```
+
+```{r}
+contact_complete_cases_preprocessed <-  cbind(contact_complete_cases_filtered_maj[1:19],
+                                              contact_complete_cases_scaled)
+```
+
+## One-Hot Encoding for Categorical Individual-Level Control Variables
+
+```{r}
+set.seed(05081997)
+contact_complete_cases_preprocessed[, 16:19] <- impute_mode(contact_complete_cases_preprocessed[, 16:19], type = "columnwise", convert_tibble = F)
+
+contact_complete_cases_preprocessed <- 
+  contact_complete_cases_preprocessed %>%
+  mutate( 
+    
+    # gender
+    gender_man = ifelse(gender==1,1,0),
+    gender_woman = ifelse(gender==2,1,0),
+    
+    # subjective social class    
+    
+    subjective_sc_working_class = ifelse(subjective_social_class==1,1,0),
+    subjective_sc_low_middle_class = ifelse(subjective_social_class==2,1,0),
+    subjective_sc_higher_middle_class = ifelse(subjective_social_class==3,1,0),
+    subjective_sc_upper_class = ifelse(subjective_social_class==4,1,0),
+    subjective_sc_other_class = 
+      ifelse(subjective_social_class==7 | subjective_social_class==9, 1, 0),
+    
+    # age
+    
+    age_18_24  = ifelse(age6 == 1, 1, 0),
+    age_25_34  = ifelse(age6 == 2, 1, 0),
+    age_35_44  = ifelse(age6 == 3, 1, 0),
+    age_45_54  = ifelse(age6 == 4, 1, 0),
+    age_55_64  = ifelse(age6 == 5, 1, 0),
+    age_65_93  = ifelse(age6 == 6, 1, 0),
+    
+    # education
+    
+    edu_none_lower = ifelse(edu3 == 1, 1, 0),
+    edu_higher_secondary = ifelse(edu3 == 2, 1, 0),
+    edu_higher_university = ifelse(edu3 == 3, 1, 0),
+    contact_binary = ifelse(contact == 1, 1, 0),
+    friendship_binary = ifelse(contact_binary == 1, 0, 1)) # for logistic regression
+```
+
+```{r}
+hist(contact_complete_cases_preprocessed$friendship_binary)
+```
+
+## Exploratory Data Analysis: Outliers
+
+```{r}
+glm_friendship <- glm(friendship_binary~ 
+                      SES_index +
+                      ethnic_entropy_index+
+                      population_density_inhabitants_km2 +
+                      Third_Place_Spaces  +
+                      Muslim_Spaces_of_Worship +
+                      Civic_Spaces  +
+                      Educational_Institutonal_Spaces +
+                      Functional_Spaces  +
+                      Medical_Institutonal_Spaces  +
+                      Money_Related_Institutonal_Spaces   +
+                      Christian_Spaces_of_Worship  +
+                      Public_Open_Spaces  +
+                      Retail_Spaces  +
+                      Social_Service_Instituional_Spaces  +
+                      User_Selecting_Spaces +
+                      Natural_Semi_Natural_Spaces  +
+                      Interchange_Spaces +
+                      gender_woman +
+                      subjective_sc_working_class +
+                      subjective_sc_low_middle_class +
+                      subjective_sc_upper_class +
+                      subjective_sc_other_class +
+                      age_18_24 +
+                      age_25_34 +
+                      age_35_44 +
+                      age_45_54 +
+                      age_55_64 +
+                      edu_none_lower +
+                      edu_higher_secondary,
+                    data=contact_complete_cases_preprocessed,
+                    family = binomial(link = "logit"))
+
+
+summary(glm_friendship)
+
+# A benchmark for evaluating the scale of the deviance is the null deviance, 
+# which is the deviance of the worst model, 
+# the one fitted without any predictor and only intercept, to the perfect model.
+# Here, we outperform the null deviance
+```
+
+### Assumptions of Logistic Regression
+
+```{r}
+# Goodness of Fit: overlall, good fit
+# Hosmer-Lemeshow test: a large value of Chi-squared (with small p-value < 0.05) indicates poor fit 
+# and small Chi-squared values (with larger p-value closer to 1) indicate a good logistic regression model fit.
+hltest(glm_friendship) 
+```
+
+```{r}
+MaxLeverage <- which.max(hatvalues(glm_friendship)) # Largest leverage
+qr_f <- qresid(glm_friendship)
+MaxResid <- which.max(abs(qr_f)) # Largest abs. residual
+MaxInfluence <- which.max(cooks.distance(glm_friendship)) # Most influential
+print(MaxLeverage)
+print(MaxResid)
+print(MaxInfluence)
+```
+
+```{r}
+contact_complete_cases_preprocessed_no_outliers <- contact_complete_cases_preprocessed[-c(473,954),]
+```
+
+```{r}
+final_friendship <- glm(friendship_binary ~ 
+              SES_index +
+              ethnic_entropy_index+
+              population_density_inhabitants_km2 +
+              Third_Place_Spaces  +
+              Muslim_Spaces_of_Worship +
+              Civic_Spaces  +
+              Educational_Institutonal_Spaces +
+              Functional_Spaces  +
+              Medical_Institutonal_Spaces  +
+              Money_Related_Institutonal_Spaces   +
+              Christian_Spaces_of_Worship  +
+              Public_Open_Spaces  +
+              Retail_Spaces  +
+              Social_Service_Instituional_Spaces  +
+              User_Selecting_Spaces +
+              Natural_Semi_Natural_Spaces  +
+              Interchange_Spaces +
+              gender_woman +
+              subjective_sc_working_class +
+              subjective_sc_low_middle_class +
+              subjective_sc_upper_class +
+              subjective_sc_other_class +
+              age_18_24 +
+              age_25_34 +
+              age_35_44 +
+              age_45_54 +
+              age_55_64 +
+              edu_none_lower +
+              edu_higher_secondary,
+            data=contact_complete_cases_preprocessed_no_outliers,
+            family = binomial(link = "logit"))
+
+summary(final_friendship)
+```
+
+```{r}
+# Small Chi-squared values (with larger p-value closer to 1) indicate a good logistic regression model fit.
+hltest(final_friendship)
+```
+
+## ML Solutiuons
+
+```{r}
+set.seed(5081997)
+
+reduced_friendship <- contact_complete_cases_preprocessed_no_outliers[, c(54, 20:52)]
+
+reduced_friendship$friendship_binary <- as.factor(reduced_friendship$friendship_binary)
+reduced_friendship$gender_man <- as.factor(reduced_friendship$gender_man)
+reduced_friendship$gender_woman <- as.factor(reduced_friendship$gender_woman)
+reduced_friendship$age_18_24 <- as.factor(reduced_friendship$age_18_24)
+reduced_friendship$age_25_34 <- as.factor(reduced_friendship$age_25_34)
+reduced_friendship$age_35_44 <- as.factor(reduced_friendship$age_35_44)
+reduced_friendship$age_45_54 <- as.factor(reduced_friendship$age_45_54)
+reduced_friendship$age_55_64 <- as.factor(reduced_friendship$age_55_64)
+reduced_friendship$age_65_93 <- as.factor(reduced_friendship$age_65_93)
+reduced_friendship$subjective_sc_working_class <- as.factor(reduced_friendship$subjective_sc_working_class)
+reduced_friendship$subjective_sc_low_middle_class <- as.factor(reduced_friendship$subjective_sc_low_middle_class)
+reduced_friendship$subjective_sc_higher_middle_class <- as.factor(reduced_friendship$subjective_sc_higher_middle_class)
+reduced_friendship$subjective_sc_other_class <- as.factor(reduced_friendship$subjective_sc_other_class)
+reduced_friendship$subjective_sc_upper_class <- as.factor(reduced_friendship$subjective_sc_upper_class)
+reduced_friendship$edu_none_lower <- as.factor(reduced_friendship$edu_none_lower)
+reduced_friendship$edu_higher_secondary <- as.factor(reduced_friendship$edu_higher_secondary)
+reduced_friendship$edu_higher_secondary <- as.factor(reduced_friendship$edu_higher_secondary)
+
+```
+
+### Class Imbalance Correction
+
+```{r}
+table(reduced_friendship$friendship_binary)
+# no friendship = 281
+# friendship = 699 
+```
+
+```{r}
+# set.seed(5081997)
+# library(ROSE)
+# 
+# # ROSE: to perform over-sampling minority examples
+# 
+# balanced.friendship <- ovun.sample(friendship_binary ~ .,
+#                            data = reduced_friendship,
+#                            N = nrow(reduced_friendship),
+#                            seed = 5081997,
+#                            method = "over")$data
+```
+
+```{r}
+# table(balanced.friendship$friendship_binary)
+# class(balanced.friendship$friendship_binary)
+# flipped order of classes. Would still predict level 1, no correction was done. 
+```
+
+```{r}
+# balanced.friendship$friendship_binary_new <- as.factor(ifelse(balanced.friendship$friendship_binary == 1, 0, 1))
+# balanced.friendship$friendship_binary_new_upd <- as.factor(ifelse(balanced.friendship$friendship_binary_new == 0, 1, 0))
+# #friendship class 0
+
+# # As a factor: ‘success’ is interpreted as the factor not having the first level (and hence usually of having the second level).
+
+# table(balanced.friendship$friendship_binary_new_upd)
+# 
+# # even with ROSE, weird thing happens here - omit completely?
+```
+
+```{r}
+# balanced.friendship <- balanced.friendship[, c(36, 1:35)]
+# balanced.friendship <- balanced.friendship[,-c(2,36)]
+# table(balanced.friendship$friendship_binary_new_upd) 
+
+# no difference here at all? Would it make sense to perform ROSE at all?
+```
+
+```{r}
+table(reduced_friendship$friendship_binary)
+class(reduced_friendship$friendship_binary)
+
+# As a factor: ‘success’ is interpreted as the factor not having the first level (and hence usually of having the second level).
+
+which(levels(reduced_friendship$friendship_binary) == 1)
+```
+
+```{r}
+# Create Train-Test Split
+
+set.seed(5081997)
+trainIndex <- createDataPartition(reduced_friendship$friendship_binary, p = 0.8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+fTrain <- reduced_friendship[ trainIndex,]
+fTest  <- reduced_friendship[-trainIndex,]
+
+levels(fTrain$friendship_binary) <- c("NoIntergroupFriendship","IntergroupFriendship")
+levels(fTest$friendship_binary) <- c( "NoIntergroupFriendship", "IntergroupFriendship")
+
+table(fTrain$friendship_binary)
+table(fTest$friendship_binary)
+
+class(fTrain$friendship_binary)
+which(levels(fTrain$friendship_binary) == "IntergroupFriendship")
+```
+
+
+```{r}
+set.seed(5081997)
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           sampling = "smote",
+                           savePredictions = TRUE, 
+                                  classProbs = TRUE)
+```
+
+### All Models: Spaces of Encounter, Administrative Characteristics & Individual Features
+
+```{r}
+set.seed(5081997)
+
+ml_glm_friendship = caret::train(friendship_binary ~  
+                           SES_index +
+                           ethnic_entropy_index+
+                           population_density_inhabitants_km2 +
+                           Third_Place_Spaces  +
+                           Muslim_Spaces_of_Worship +
+                           Civic_Spaces  +
+                           Educational_Institutonal_Spaces +
+                           Functional_Spaces  +
+                           Medical_Institutonal_Spaces  +
+                           Money_Related_Institutonal_Spaces   +
+                           Christian_Spaces_of_Worship  +
+                           Public_Open_Spaces  +
+                           Retail_Spaces  +
+                           Social_Service_Instituional_Spaces  +
+                           User_Selecting_Spaces +
+                           Natural_Semi_Natural_Spaces  +
+                           Interchange_Spaces +
+                           gender_woman +
+                           subjective_sc_working_class +
+                           subjective_sc_low_middle_class +
+                           subjective_sc_upper_class +
+                           subjective_sc_other_class +
+                           age_18_24 +
+                           age_25_34 +
+                           age_35_44 +
+                           age_45_54 +
+                           age_55_64 +
+                           edu_none_lower +
+                           edu_higher_secondary,
+                         data = fTrain, 
+                         method = 'glm',
+                         trControl = fitControl,
+                         metric = "Accuracy")
+
+getTrainPerf(ml_glm_friendship)
+summary(ml_glm_friendship)
+```
+
+```{r}
+set.seed(5081997)
+
+predictions_class <-  predict(ml_glm_friendship, fTest[,-c(1, 19, 23, 31, 34)])
+cm_friendship_glm1_b3 <- confusionMatrix(predictions_class, fTest$friendship_binary, 
+                                         mode = "everything",
+                                         positive = "IntergroupFriendship")
+cm_friendship_glm1_b3
+
+# Accuracy: 0.7231;  Precision: 0.8148; Recall:  0.7914; F1: 0.8029 
+```
+
+```{r}
+round(as.data.frame(ml_glm_friendship$finalModel$coefficients), 2)
+```
+
+```{r}
+varImp(ml_glm_friendship)
+```
+
+```{r}
+pred_glm <- predict(ml_glm_friendship, fTest[,-1], type="prob", positive = "IntergroupFriendship")
+m_glm = data.frame(pred_glm, fTest$friendship_binary)
+test_glm <- evalm(m_glm, positive = "IntergroupFriendship") 
+test_glm$roc # ROC = 0.730
+test_glm$stdres # AUC-PR 0.850
+```
+
+```{r}
+set.seed(5081997)
+
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                          sampling = "smote",
+                           savePredictions = TRUE, 
+                           classProbs = TRUE)
+set.seed(5081997)
+ml_rf_friendship <- caret::train(friendship_binary ~ 
+                                   SES_index +
+                                   ethnic_entropy_index+
+                                   population_density_inhabitants_km2 +
+                                   Third_Place_Spaces  +
+                                   Muslim_Spaces_of_Worship +
+                                   Civic_Spaces  +
+                                   Educational_Institutonal_Spaces +
+                                   Functional_Spaces  +
+                                   Medical_Institutonal_Spaces  +
+                                   Money_Related_Institutonal_Spaces   +
+                                   Christian_Spaces_of_Worship  +
+                                   Public_Open_Spaces  +
+                                   Retail_Spaces  +
+                                   Social_Service_Instituional_Spaces  +
+                                   User_Selecting_Spaces +
+                                   Natural_Semi_Natural_Spaces  +
+                                   Interchange_Spaces +
+                                   gender_woman +
+                                   subjective_sc_working_class +
+                                   subjective_sc_low_middle_class +
+                                   subjective_sc_upper_class +
+                                   subjective_sc_other_class +
+                                   age_18_24 +
+                                   age_25_34 +
+                                   age_35_44 +
+                                   age_45_54 +
+                                   age_55_64 +
+                                   edu_none_lower +
+                                   edu_higher_secondary,
+                                 data = fTrain, 
+                                 method = "ranger", 
+                                 trControl = fitControl,
+                                 importance = "permutation",
+                                 metric = "Accuracy")
+
+ml_rf_friendship
+```
+
+```{r}
+set.seed(5081997)
+
+predictions <-  predict(ml_rf_friendship, fTest[,-1])
+cm_f_rf <- confusionMatrix(predictions, 
+                           fTest$friendship_binary, 
+                           mode = "everything",
+                           positive ="IntergroupFriendship")
+cm_f_rf
+
+# Target
+# LogReg. Accuracy: 0.7231;  Precision: 0.8148; Recall:  0.7914; F1: 0.8029 
+
+# RF Accuracy: 0.6821; Precision:  0.7391; Recall: 0.8561; F1:  0.7933     
+```
+
+```{r}
+varImp(ml_rf_friendship)
+```
+
+```{r}
+pred_final_rf <- predict(ml_rf_friendship, fTest[,-1], type="prob", positive ="IntergroupFriendships")
+m_final_rf = data.frame(pred_final_rf, fTest$friendship_binary)
+test_final_rf <- evalm(m_final_rf, positive ="IntergroupFriendship") 
+test_final_rf$roc # ROC = 0.690
+test_final_rf$stdres # AUC-PR	0.840
+```
+
+```{r}
+set.seed(5081997)
+
+fitControl_f <- trainControl(method = "cv",
+                           number = 10,
+                           sampling = "smote", 
+                           classProbs = TRUE, 
+                           savePredictions = TRUE)
+  
+rfGrid_friendship <- expand.grid(mtry = c(2, 5, 12),
+                         splitrule = c("gini", "extratrees", "hellinger"),
+                         min.node.size = c(1, 5))
+  
+store_maxtrees_f <- list()
+
+for (i in seq(500, 2500, by = 500)) {
+  
+  set.seed(5081997)
+  
+  rf_fit_tuned_friendship <- caret::train(friendship_binary ~ ., data = fTrain, 
+                                 method = "ranger", 
+                                 trControl = fitControl_f,
+                                 tuneGrid =  rfGrid_friendship,
+                                 verbose = T,
+                                 importance = "permutation",
+                                 metric = "Accuracy",
+                                 num.tree = i)
+  
+  key_f <- toString(i)
+  store_maxtrees_f[[key_f]] <-  rf_fit_tuned_friendship 
+  
+}
+
+results_tree_f <- resamples(store_maxtrees_f)
+summary(results_tree_f) 
+```
+
+```{r}
+best_tune_f_1 <- store_maxtrees_f[["500"]]
+best_tune_f_2 <- store_maxtrees_f[["1000"]]
+best_tune_f_3 <- store_maxtrees_f[["2500"]]
+```
+
+```{r}
+set.seed(5081997)
+
+predictions <-  predict(best_tune_f_1, fTest[,-1])
+cm_f_rf_1 <- confusionMatrix(predictions, fTest$friendship_binary, mode = "everything",
+                                   positive = "IntergroupFriendship")
+cm_f_rf_1 
+
+# Target
+# LogReg. Accuracy: 0.7231;  Precision: 0.8148; Recall:  0.7914; F1: 0.8029 
+
+# RF Accuracy: 0.6821; Precision:  0.7391; Recall: 0.8561; F1:  0.7933    
+
+#Fit:
+# Accuracy : 0.7077,  Precision  0.7470 , Recall :  0.8921, F1 :  0.8131                  
+```
+
+```{r}
+set.seed(5081997)
+
+predictions <-  predict(best_tune_f_2, fTest[,-1])
+cm_f_rf_2 <- confusionMatrix(predictions, fTest$friendship_binary, mode = "everything",
+                                   positive = "IntergroupFriendship")
+cm_f_rf_2 
+
+# Target
+# LogReg. Accuracy: 0.7231;  Precision: 0.8148; Recall:  0.7914; F1: 0.8029 
+
+# RF Accuracy: 0.6821; Precision:  0.7391; Recall: 0.8561; F1:  0.7933        
+
+#Fit:
+
+# Accuracy : 0.7128,  Precision: 0.7515 , Recall :  0.8921   , F1 :  0.8158 
+```
+
+```{r}
+set.seed(5081997)
+
+predictions <-  predict(best_tune_f_3, fTest[,-1])
+cm_f_rf_3 <- confusionMatrix(predictions, fTest$friendship_binary, mode = "everything",
+                                   positive = "IntergroupFriendship")
+cm_f_rf_3 
+
+# Target
+# LogReg. Accuracy: 0.7231;  Precision: 0.8148; Recall:  0.7914; F1: 0.8029 
+
+# RF Accuracy: 0.6821; Precision:  0.7391; Recall: 0.8561; F1:  0.7933        
+
+#Fit:
+
+# Accuracy : 0.7128,  Precision: 0.7515 , Recall :   0.8921   , F1 :  0.8158 
+```
+
+```{r}
+pred_final_rf_tuned <- predict(best_tune_f_3, fTest[,-1], type="prob", positive = "IntergroupFriendship")
+m_final_rf_tuned = data.frame(pred_final_rf_tuned, fTest$friendship_binary)
+test_final_rf_tuned <- evalm(m_final_rf_tuned, positive = "IntergroupFriendship") 
+test_final_rf_tuned$roc # ROC = 0.7100
+test_final_rf_tuned$stdres # AUC-PR	0.8500
+```
+
+```{r}
+best_tune_f_3[["finalModel"]]
+best_tune_f_3[["finalModel"]][["splitrule"]]
+```
+
+```{r}
+varImp(best_tune_f_3)
+```
+
+```{r}
+# store variable importance
+varImp(ml_glm_friendship)
+rf_fit_tuned_f_to_plot <- as.data.frame(varImp(ml_glm_friendship)$importance)
+
+rownames(rf_fit_tuned_f_to_plot) <- c("Neighborhood SES",
+                  "Ethnic Entropy Index",
+                  "Population Density",
+                  "Third Spaces",
+                  "Muslim Spaces of Worship",
+                  "Civic Spaces",
+                  "Educational Institutional Spaces", 
+                  "Functional Spaces", 
+                  "Medical Institutional Spaces",
+                  "Money-Related Institutional Spaces",
+                  "Christian Spaces of Worship",
+                  "Public Open Spaces",
+                  "Retail Spaces",
+                  "Social Service Institutional Spaces",
+                  "User-Selecting Spaces",
+                  "Natural & Semi-Natural Spaces",
+                  "Interchange Spaces",
+                  "Gender: Female",
+                  "Subjective Social Class: Working Class",
+                  "Subjective Social Class: Low Middle Class",
+                  "Subjective Social Class: Upper Class",
+                  "Subjective Social Class: Other Class",
+                  "Age: 18-24", 
+                  "Age: 25-34",
+                  "Age: 35-44",
+                  "Age: 45-54",
+                  "Age: 55-64",
+                  "Education: None or Lower", 
+                  "Education: Higher Secondary" ) 
+
+names(rf_fit_tuned_f_to_plot)[1] <- "LR"
+
+
+rf_fit_tuned_f_to_plot_vip <- tibble::rownames_to_column(rf_fit_tuned_f_to_plot, "Variable")
+
+
+rf_fit_tuned_f_ggplot <- ggplot(rf_fit_tuned_f_to_plot_vip, aes(x = reorder(Variable, LR), y=LR)) + 
+  geom_bar(aes(fill = reorder(Variable, LR)), stat = "identity", width=0.5) +
+  scale_fill_manual(values = my_cols_var_imp) + 
+  ylab("Feature Importance") + 
+  xlab("Variables") +
+  theme_classic(base_size = 12) + 
+ theme(axis.title.x=element_text(colour="gray8", size = 11), 
+        axis.title.y=element_text(colour="gray8", size = 11),
+        axis.text.y = element_text(color = "gray8", size = 6.5),
+        axis.text.x = element_text(color = "gray8", size = 6.5),
+        title = element_text(colour = "gray8", size = 11),
+        panel.background = element_rect(fill = 'gray97'),
+        legend.position= "none") +
+  labs(title="Variable Importance Scores: Logistic Regression",
+       subtitle = "Intergroup Friendship") +
+  coord_flip()
+
+# Save for the paper 
+# ggsave("igr_lr_varImp.jpeg", units="in", width=8, height=5, dpi=800)
+
+rf_fit_tuned_f_ggplot
+```
+
+### All Models: Spaces of Encounter & Administrative Characteristics
+
+```{r}
+set.seed(5081997)
+
+
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           sampling = "smote",
+                           savePredictions = TRUE, 
+                           classProbs = TRUE)
+
+ml_glm_friendship_spaces_admin = caret::train(friendship_binary ~  
+                           SES_index +
+                           ethnic_entropy_index+
+                           population_density_inhabitants_km2 +
+                           Third_Place_Spaces  +
+                           Muslim_Spaces_of_Worship +
+                           Civic_Spaces  +
+                           Educational_Institutonal_Spaces +
+                           Functional_Spaces  +
+                           Medical_Institutonal_Spaces  +
+                           Money_Related_Institutonal_Spaces   +
+                           Christian_Spaces_of_Worship  +
+                           Public_Open_Spaces  +
+                           Retail_Spaces  +
+                           Social_Service_Instituional_Spaces  +
+                           User_Selecting_Spaces +
+                           Natural_Semi_Natural_Spaces  +
+                           Interchange_Spaces,
+                           # gender_woman +
+                           # subjective_sc_working_class +
+                           # subjective_sc_low_middle_class +
+                           # subjective_sc_upper_class +
+                           # subjective_sc_other_class +
+                           # age_18_24 +
+                           # age_25_34 +
+                           # age_35_44 +
+                           # age_45_54 +
+                           # age_55_64 +
+                           # edu_none_lower +
+                           # edu_higher_secondary,
+                         data = fTrain, 
+                         method = 'glm',
+                         trControl = fitControl,
+                         metric = "Accuracy")
+
+getTrainPerf(ml_glm_friendship_spaces_admin)
+summary(ml_glm_friendship_spaces_admin)
+```
+
+```{r}
+set.seed(5081997)
+
+predictions_class_spaces_admin <-  predict(ml_glm_friendship_spaces_admin, fTest[,-c(1, 19:34)])
+cm_friendship_spaces_admin <- confusionMatrix(predictions_class_spaces_admin, fTest$friendship_binary, 
+                                         mode = "everything", 
+                                         positive = "IntergroupFriendship")
+cm_friendship_spaces_admin 
+
+# Accuracy: 0.6051;  Precision:  0.8100; Recall:  0.5827; F1: 0.6778 
+```
+
+```{r}
+pred_glm_spaces_admin <- predict(ml_glm_friendship_spaces_admin, fTest[,-c(1, 19:34)], type="prob", 
+                                 positive = "IntergroupFriendship")
+m_glm_spaces_admin = data.frame(pred_glm_spaces_admin, fTest$friendship_binary)
+test_glm_spaces_admin <- evalm(m_glm_spaces_admin, positive = "IntergroupFriendship") 
+test_glm_spaces_admin$roc # ROC = 0.6900
+test_glm_spaces_admin$stdres # AUC-PR	0.830
+```
+
+```{r}
+set.seed(5081997)
+
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           sampling = "smote",
+                           savePredictions = TRUE, 
+                           classProbs = TRUE)
+set.seed(5081997)
+ml_rf_friendship_spaces_admin <- caret::train(friendship_binary ~ 
+                                   SES_index +
+                                   ethnic_entropy_index+
+                                   population_density_inhabitants_km2 +
+                                   Third_Place_Spaces  +
+                                   Muslim_Spaces_of_Worship +
+                                   Civic_Spaces  +
+                                   Educational_Institutonal_Spaces +
+                                   Functional_Spaces  +
+                                   Medical_Institutonal_Spaces  +
+                                   Money_Related_Institutonal_Spaces   +
+                                   Christian_Spaces_of_Worship  +
+                                   Public_Open_Spaces  +
+                                   Retail_Spaces  +
+                                   Social_Service_Instituional_Spaces  +
+                                   User_Selecting_Spaces +
+                                   Natural_Semi_Natural_Spaces  +
+                                   Interchange_Spaces,
+                                   # gender_woman +
+                                   # subjective_sc_working_class +
+                                   # subjective_sc_low_middle_class +
+                                   # subjective_sc_upper_class +
+                                   # subjective_sc_other_class +
+                                   # age_18_24 +
+                                   # age_25_34 +
+                                   # age_35_44 +
+                                   # age_45_54 +
+                                   # age_55_64 +
+                                   # edu_none_lower +
+                                   # edu_higher_secondary,
+                                 data = fTrain, 
+                                 method = "ranger", 
+                                 trControl = fitControl,
+                                 importance = "permutation",
+                                 metric = "Accuracy")
+
+ml_rf_friendship_spaces_admin
+```
+
+```{r}
+set.seed(5081997)
+
+predictions_spaces_admin <-  predict(ml_rf_friendship_spaces_admin, fTest[,-c(1, 19:34)])
+cm_f_rf_spaces_admin <- confusionMatrix(predictions_spaces_admin , fTest$friendship_binary, mode = "everything", positive = "IntergroupFriendship")
+cm_f_rf_spaces_admin
+
+#Target
+# Accuracy: 0.6051;  Precision:  0.8100; Recall:  0.5827; F1: 0.6778 
+
+# Accuracy : 0.6872; Precision :  0.7532  ; Recall : 0.8345; F1 : 0.7918
+```
+
+```{r}
+pred_final_rf_spaces_admin <- predict(ml_rf_friendship_spaces_admin,  fTest[,-c(1, 19:34)], type="prob", positive = "IntergroupFriendship")
+m_final_rf_spaces_admin = data.frame(pred_final_rf_spaces_admin , fTest$friendship_binary)
+test_final_rf_spaces_admin <- evalm(m_final_rf_spaces_admin, positive = "IntergroupFriendship") 
+test_final_rf_spaces_admin$roc # ROC = 0.6500
+test_final_rf_spaces_admin$stdres # AUC-PR 0.800
+```
+
+```{r}
+f.task = makeClassifTask(data = fTrain , target = "friendship_binary")
+
+# Estimate runtime
+
+estimateTimeTuneRanger(f.task, iters = 1000, num.threads = 1,
+                       num.trees = 2500)
+
+res_mtry <- tuneMtryFast(friendship_binary ~ 
+                           SES_index +
+                           ethnic_entropy_index+
+                           population_density_inhabitants_km2 +
+                           Third_Place_Spaces  +
+                           Muslim_Spaces_of_Worship +
+                           Civic_Spaces  +
+                           Educational_Institutonal_Spaces +
+                           Functional_Spaces  +
+                           Medical_Institutonal_Spaces  +
+                           Money_Related_Institutonal_Spaces   +
+                           Christian_Spaces_of_Worship  +
+                           Public_Open_Spaces  +
+                           Retail_Spaces  +
+                           Social_Service_Instituional_Spaces  +
+                           User_Selecting_Spaces +
+                           Natural_Semi_Natural_Spaces  +
+                           Interchange_Spaces, data = fTrain, stepFactor = 0.5)
+res_mtry # from 2 to 10
+```
+
+```{r}
+set.seed(5081997)
+
+fitControl_f <- trainControl(method = "cv",
+                             number = 10,
+                             sampling = "smote", 
+                             classProbs = TRUE, 
+                             savePredictions = TRUE)
+
+rfGrid_friendship <- expand.grid(mtry = c(2, 5, 12),
+                                 splitrule = c("gini", "extratrees", "hellinger"),
+                                 min.node.size = c(1, 5))
+
+store_maxtrees_f <- list()
+
+for (i in seq(500, 2500, by = 500)) {
+  
+  set.seed(5081997)
+  
+  rf_fit_tuned_friendship_spaces_admin <- caret::train(friendship_binary ~ 
+                                                         SES_index +
+                                                         ethnic_entropy_index+
+                                                         population_density_inhabitants_km2 +
+                                                         Third_Place_Spaces  +
+                                                         Muslim_Spaces_of_Worship +
+                                                         Civic_Spaces  +
+                                                         Educational_Institutonal_Spaces +
+                                                         Functional_Spaces  +
+                                                         Medical_Institutonal_Spaces  +
+                                                         Money_Related_Institutonal_Spaces   +
+                                                         Christian_Spaces_of_Worship  +
+                                                         Public_Open_Spaces  +
+                                                         Retail_Spaces  +
+                                                         Social_Service_Instituional_Spaces  +
+                                                         User_Selecting_Spaces +
+                                                         Natural_Semi_Natural_Spaces  +
+                                                         Interchange_Spaces,
+                                                       data = fTrain, 
+                                                       method = "ranger", 
+                                                       trControl = fitControl_f,
+                                                       tuneGrid =  rfGrid_friendship,
+                                                       verbose = T,
+                                                       importance = "permutation",
+                                                       metric = "Accuracy",
+                                                       num.tree = i)
+  
+  key_f <- toString(i)
+  store_maxtrees_f[[key_f]] <-  rf_fit_tuned_friendship_spaces_admin
+  
+}
+
+results_tree_f <- resamples(store_maxtrees_f)
+summary(results_tree_f) 
+
+```
+
+```{r}
+# best_tune_f_spaces_admin_1 <- store_maxtrees_f[["2000"]]
+best_tune_f_spaces_admin_2 <- store_maxtrees_f[["2500"]]
+```
+
+```{r}
+set.seed(5081997)
+
+predictions_f_spaces_admin_2 <-  predict(best_tune_f_spaces_admin_2, fTest[,-c(1, 19:34)])
+cm_f_rf_spaces_admin_2 <- confusionMatrix(predictions_f_spaces_admin_2, fTest$friendship_binary, mode = "everything", positive = "IntergroupFriendship")
+cm_f_rf_spaces_admin_2
+#Target
+
+# Accuracy: 0.6051;  Precision:  0.8100; Recall:  0.5827; F1: 0.6778 
+
+# Accuracy : 0.6872; Precision :  0.7532  ; Recall : 0.8345; F1 : 0.7918
+
+# Accuracy : 0.6974; Precision :0.7532    ; Recall : 0.8561 ; F1 : 0.8013; 
+```
+
+```{r}
+pred_roc_spaces_admin <- predict(best_tune_f_spaces_admin_2, fTest[,-c(1, 19:34)], type="prob", 
+                                 positive = "IntergroupFriendship")
+m_pred_roc_spaces_admin = data.frame(pred_roc_spaces_admin, fTest$friendship_binary)
+test_pred_roc_spaces_admin <- evalm(m_pred_roc_spaces_admin, positive = "IntergroupFriendship") 
+test_pred_roc_spaces_admin$roc # ROC = 0.6600
+test_pred_roc_spaces_admin$stdres # AUC-PR	0.8100
+```
+
+```{r}
+best_tune_f_spaces_admin_2[["finalModel"]]
+best_tune_f_spaces_admin_2[["finalModel"]][["splitrule"]]
+```
+
+### All Models: Spaces of Encounter
+
+```{r}
+set.seed(5081997)
+
+ml_glm_friendship_spaces = caret::train(friendship_binary ~  
+                           # SES_index +
+                           # ethnic_entropy_index+
+                           # population_density_inhabitants_km2 +
+                           Third_Place_Spaces  +
+                           Muslim_Spaces_of_Worship +
+                           Civic_Spaces  +
+                           Educational_Institutonal_Spaces +
+                           Functional_Spaces  +
+                           Medical_Institutonal_Spaces  +
+                           Money_Related_Institutonal_Spaces   +
+                           Christian_Spaces_of_Worship  +
+                           Public_Open_Spaces  +
+                           Retail_Spaces  +
+                           Social_Service_Instituional_Spaces  +
+                           User_Selecting_Spaces +
+                           Natural_Semi_Natural_Spaces  +
+                           Interchange_Spaces,
+                           # gender_woman +
+                           # subjective_sc_working_class +
+                           # subjective_sc_low_middle_class +
+                           # subjective_sc_upper_class +
+                           # subjective_sc_other_class +
+                           # age_18_24 +
+                           # age_25_34 +
+                           # age_35_44 +
+                           # age_45_54 +
+                           # age_55_64 +
+                           # edu_none_lower +
+                           # edu_higher_secondary,
+                         data = fTrain, 
+                         method = 'glm',
+                         trControl = fitControl,
+                         metric = "Accuracy")
+
+getTrainPerf(ml_glm_friendship_spaces)
+summary(ml_glm_friendship_spaces)
+```
+
+```{r}
+set.seed(5081997)
+
+predictions_class_spaces <-  predict(ml_glm_friendship_spaces, fTest[,-c(1, 16:34)])
+cm_friendship_spaces <- confusionMatrix(predictions_class_spaces, fTest$friendship_binary, 
+                                         mode = "everything", 
+                                         positive = "IntergroupFriendship")
+cm_friendship_spaces 
+# Accuracy: 0.4718;  Precision: 0.7727 ; Recall:  0.3669 ; F1: 0.4976  
+```
+
+```{r}
+pred_glm_spaces <- predict(ml_glm_friendship_spaces, fTest[,-c(1, 16:34)], type="prob", 
+                                 positive = "IntergroupFriendship")
+m_glm_spaces = data.frame(pred_glm_spaces, fTest$friendship_binary)
+test_glm_spaces <- evalm(m_glm_spaces, positive = "IntergroupFriendship") 
+test_glm_spaces$roc # ROC = 0.5800
+test_glm_spaces$stdres # AUC-PR	0.7800
+```
+
+```{r}
+set.seed(5081997)
+
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           sampling = "smote",
+                           savePredictions = TRUE, 
+                           classProbs = TRUE)
+set.seed(5081997)
+ml_rf_friendship_spaces <- caret::train(friendship_binary ~ 
+                                   # SES_index +
+                                   # ethnic_entropy_index+
+                                   # population_density_inhabitants_km2 +
+                                   Third_Place_Spaces  +
+                                   Muslim_Spaces_of_Worship +
+                                   Civic_Spaces  +
+                                   Educational_Institutonal_Spaces +
+                                   Functional_Spaces  +
+                                   Medical_Institutonal_Spaces  +
+                                   Money_Related_Institutonal_Spaces   +
+                                   Christian_Spaces_of_Worship  +
+                                   Public_Open_Spaces  +
+                                   Retail_Spaces  +
+                                   Social_Service_Instituional_Spaces  +
+                                   User_Selecting_Spaces +
+                                   Natural_Semi_Natural_Spaces  +
+                                   Interchange_Spaces,
+                                   # gender_woman +
+                                   # subjective_sc_working_class +
+                                   # subjective_sc_low_middle_class +
+                                   # subjective_sc_upper_class +
+                                   # subjective_sc_other_class +
+                                   # age_18_24 +
+                                   # age_25_34 +
+                                   # age_35_44 +
+                                   # age_45_54 +
+                                   # age_55_64 +
+                                   # edu_none_lower +
+                                   # edu_higher_secondary,
+                                 data = fTrain, 
+                                 method = "ranger", 
+                                 trControl = fitControl,
+                                 importance = "permutation",
+                                 metric = "Accuracy")
+
+ml_rf_friendship_spaces
+```
+
+```{r}
+set.seed(5081997)
+
+predictions_spaces <-  predict(ml_rf_friendship_spaces, fTest[,-c(1, 16:34)])
+cm_f_rf_spaces <- confusionMatrix(predictions_spaces, fTest$friendship_binary, mode = "everything", positive = "IntergroupFriendship")
+cm_f_rf_spaces
+
+# Target
+# Accuracy: 0.4718;  Precision: 0.7727 ; Recall:  0.3669 ; F1: 0.4976  
+
+# Accuracy: 0.6564;  Precision: 0.7368 ; Recall: 0.8058  ; F1: 0.7698  
+```
+
+```{r}
+pred_final_rf_spaces<- predict(ml_rf_friendship_spaces,  fTest[,-c(1, 16:34)], type="prob", positive = "IntergroupFriendship")
+m_final_rf_spaces = data.frame(pred_final_rf_spaces, fTest$friendship_binary)
+test_final_rf_spaces <- evalm(m_final_rf_spaces, positive = "IntergroupFriendship") 
+test_final_rf_spaces$roc # ROC = 0.5800
+test_final_rf_spaces$stdres # AUC-PR	0.7500
+```
+
+```{r}
+f.task = makeClassifTask(data = fTrain , target = "friendship_binary")
+
+# Estimate runtime
+
+estimateTimeTuneRanger(f.task, iters = 1000, num.threads = 1,
+                       num.trees = 2500)
+
+res_mtry <- tuneMtryFast(friendship_binary ~ 
+                           Third_Place_Spaces  +
+                           Muslim_Spaces_of_Worship +
+                           Civic_Spaces  +
+                           Educational_Institutonal_Spaces +
+                           Functional_Spaces  +
+                           Medical_Institutonal_Spaces  +
+                           Money_Related_Institutonal_Spaces   +
+                           Christian_Spaces_of_Worship  +
+                           Public_Open_Spaces  +
+                           Retail_Spaces  +
+                           Social_Service_Instituional_Spaces  +
+                           User_Selecting_Spaces +
+                           Natural_Semi_Natural_Spaces  +
+                           Interchange_Spaces, data = fTrain, stepFactor = 0.5)
+res_mtry # from 2 to 10
+```
+
+
+```{r}
+set.seed(5081997)
+
+fitControl_f <- trainControl(method = "cv",
+                             number = 10,
+                             sampling = "smote", 
+                             classProbs = TRUE, 
+                             savePredictions = TRUE)
+
+rfGrid_friendship <- expand.grid(mtry = c(2, 5, 10),
+                                 splitrule = c("gini", "extratrees", "hellinger"),
+                                 min.node.size = c(1, 5))
+
+store_maxtrees_f <- list()
+
+for (i in seq(500, 2500, by = 500)) {
+  
+  set.seed(5081997)
+  
+  rf_fit_tuned_friendship_spaces <- caret::train(friendship_binary ~ 
+                                                         Third_Place_Spaces  +
+                                                         Muslim_Spaces_of_Worship +
+                                                         Civic_Spaces  +
+                                                         Educational_Institutonal_Spaces +
+                                                         Functional_Spaces  +
+                                                         Medical_Institutonal_Spaces  +
+                                                         Money_Related_Institutonal_Spaces   +
+                                                         Christian_Spaces_of_Worship  +
+                                                         Public_Open_Spaces  +
+                                                         Retail_Spaces  +
+                                                         Social_Service_Instituional_Spaces  +
+                                                         User_Selecting_Spaces +
+                                                         Natural_Semi_Natural_Spaces  +
+                                                         Interchange_Spaces,
+                                                       data = fTrain, 
+                                                       method = "ranger", 
+                                                       trControl = fitControl_f,
+                                                       tuneGrid =  rfGrid_friendship,
+                                                       verbose = T,
+                                                       importance = "permutation",
+                                                       metric = "Accuracy",
+                                                       num.tree = i)
+  
+  key_f <- toString(i)
+  store_maxtrees_f[[key_f]] <-  rf_fit_tuned_friendship_spaces
+  
+}
+
+results_tree_f <- resamples(store_maxtrees_f)
+summary(results_tree_f) 
+
+```
+
+```{r}
+# best_tune_f_spaces1 <- store_maxtrees_f[["500"]]
+best_tune_f_spaces2 <- store_maxtrees_f[["2500"]]
+```
+
+```{r}
+# set.seed(5081997)
+# 
+# predictions_f_spaces <-  predict(best_tune_f_spaces1, fTest[,-c(1, 16:34)])
+# cm_f_rf_spaces <- confusionMatrix(predictions_f_spaces, fTest$friendship_binary, mode = "everything",
+#                                    positive = "IntergroupFriendship")
+# cm_f_rf_spaces
+
+# Target
+# Accuracy: 0.4718;  Precision: 0.7727 ; Recall:  0.3669 ; F1: 0.4976  
+
+# Accuracy: 0.6564;  Precision: 0.7368 ; Recall: 0.8058  ; F1: 0.7698 
+
+# Accuracy :  0.6462; Precision:0.7431      ; Recall :0.7698     ; F1 :0.7562      
+```
+
+```{r}
+# pred_final_rf_spaces <- predict(best_tune_f_spaces1,  fTest[,-c(1, 16:34)], type="prob", positive = "IntergroupFriendship")
+# m_final_rf_spaces = data.frame(pred_final_rf_spaces, fTest$friendship_binary)
+# test_final_rf_spaces <- evalm(m_final_rf_spaces, positive = "IntergroupFriendship") 
+# test_final_rf_spaces$roc # ROC = 0.580
+# test_final_rf_spaces$stdres # AUC-PR	0.750
+```
+
+```{r}
+set.seed(5081997)
+
+predictions_f_spaces2 <-  predict(best_tune_f_spaces2, fTest[,-c(1, 16:34)])
+cm_f_rf_spaces2 <- confusionMatrix(predictions_f_spaces2, fTest$friendship_binary, mode = "everything",
+                                   positive = "IntergroupFriendship")
+cm_f_rf_spaces2
+
+# Target
+# Accuracy: 0.4718;  Precision: 0.7727 ; Recall:  0.3669 ; F1: 0.4976  
+
+# Accuracy: 0.6564;  Precision: 0.7368 ; Recall: 0.8058  ; F1: 0.7698 
+
+# Accuracy :  0.6667 ; Precision: 0.7534; Recall :0.7914; F1 :0.7719         
+```
+
+```{r}
+pred_final_rf_spaces2 <- predict(best_tune_f_spaces2,  fTest[,-c(1, 16:34)], type="prob", positive = "IntergroupFriendship")
+m_final_rf_spaces2 = data.frame(pred_final_rf_spaces2, fTest$friendship_binary)
+test_final_rf_spaces2 <- evalm(m_final_rf_spaces2, positive = "IntergroupFriendship") 
+test_final_rf_spaces2$roc # ROC = 0.590
+test_final_rf_spaces2$stdres # AUC-PR	0.780	
+```
+
+```{r}
+best_tune_f_spaces2[["finalModel"]]
+```
+
