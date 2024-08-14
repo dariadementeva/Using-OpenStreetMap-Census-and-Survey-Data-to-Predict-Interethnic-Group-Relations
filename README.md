@@ -1,4 +1,4 @@
-# Using-OpenStreetMap-Census-and-Survey-Data-to-Predict-Interethnic-Group-Relations
+# Using OpenStreetMap, Census, and Survey Data to Predict Interethnic Group Relations in Belgium: A Machine Learning Approach
 This repository is set up to showcase the analytical strategy behind our paper"Using OpenStreetMap, Census and Survey Data to Predict Interethnic Group Relations in Belgium: A Machine Learning Approach" published in Social Science Computer Review.
 
 # Background
